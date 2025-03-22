@@ -1,0 +1,76 @@
+[tool.poetry]
+name = "langgraph-api"
+version = "0.0.32"
+description = ""
+authors = [
+    "Nuno Campos <nuno@langchain.dev>",
+    "Will Fu-Hinthorn <will@langchain.dev>",
+]
+license = "Elastic-2.0"
+packages = [
+    { include = "langgraph_api" },
+    { include = "langgraph_storage" },
+    { include = "langgraph_license" },
+]
+readme = "README.md"
+include = ["LICENSE", "openapi.json", "logging.json"]
+
+[tool.poetry.scripts]
+langgraph-verify-graphs = "langgraph_api.graph:verify_graphs"
+
+[tool.poetry.dependencies]
+python = ">=3.11.0,<4.0"
+sse-starlette = ">=2.1.0,<2.2.0"
+starlette = ">=0.38.6"
+watchfiles = ">=0.13"
+langgraph = ">=0.2.56,<0.4.0"
+langgraph-checkpoint = ">=2.0.21,<3.0"
+orjson = ">=3.9.7"
+uvicorn = ">=0.26.0"
+langsmith = ">=0.1.63,<0.4.0"
+httpx = ">=0.25.0"
+langchain-core = ">=0.2.38,<0.4.0"
+tenacity = ">=8.0.0"
+jsonschema-rs = ">=0.20.0,<0.30"
+structlog = ">=24.1.0,<26"
+pyjwt = "^2.9.0"
+cryptography = "^43.0.3"
+langgraph-sdk = "^0.1.58"
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.6.2"
+codespell = "^2.2.0"
+pytest = "^7.4.4"
+anyio = "^4.4.0"
+pytest-watcher = "^0.4.2"
+langgraph-cli = "^0.1.72"
+pytest-repeat = "^0.9.3"
+pytest-retry = "^1.6.3"
+pytest-httpserver = "^1.1.0"
+fastapi = "^0.115.8"
+langgraph = ">=0.3.17"
+pycryptodome = "^3.22.0"
+
+[tool.pytest.ini_options]
+# --strict-markers will raise errors on unknown marks.
+# https://docs.pytest.org/en/7.1.x/how-to/mark.html#raising-errors-on-unknown-marks
+#
+# https://docs.pytest.org/en/7.1.x/reference/reference.html
+# --strict-config       any warnings encountered while parsing the `pytest`
+#                       section of the configuration file raise errors.
+addopts = "--strict-markers --strict-config --durations=5 -vv"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+lint.select = ["E", "F", "UP", "B", "I"]
+lint.ignore = ["E501", "B008"]
+target-version = "py311"
+
+[tool.pytest-watcher]
+now = true
+delay = 3
+patterns = ["*.py"]
