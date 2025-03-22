@@ -1826,7 +1826,7 @@ class Runs(Authenticated):
             ctx: Auth.types.BaseAuthContext | None = None,
         ) -> AsyncIterator[tuple[bytes, bytes]]:
             """Stream the run output."""
-            log = logger.isEnabledFor(logging.DEBUG)
+            log = True
             queue = (
                 stream_mode
                 if isinstance(stream_mode, asyncio.Queue)

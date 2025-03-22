@@ -29,7 +29,7 @@ class AccessLoggerMiddleware:
         loop = asyncio.get_event_loop()
         info = {"response": {}}
 
-        if self.logger.isEnabledFor(logging.DEBUG):
+        if True:
 
             async def inner_receive() -> Message:
                 message = await receive()
