@@ -75,8 +75,8 @@ def create_pool(
     # parse connection string
     params = conninfo_to_dict(config.DATABASE_URI)
     params.setdefault("options", "")
-    if not __test__:
-        params["options"] += " -c lock_timeout=1000"  # ms
+    #if not __test__:
+        #params["options"] += " -c lock_timeout=1000"  # ms
 
     # For thread-local pools, use smaller pool sizes
     if thread_local:
@@ -109,8 +109,8 @@ def create_pool(
 async def create_conn(__test__: bool = False) -> AsyncConnection[DictRow]:
     params = conninfo_to_dict(config.DATABASE_URI)
     params.setdefault("options", "")
-    if not __test__:
-        params["options"] += " -c lock_timeout=1000"  # ms
+    #if not __test__:
+        #params["options"] += " -c lock_timeout=1000"  # ms
 
     conn = await AsyncConnection.connect(
         config.DATABASE_URI,
