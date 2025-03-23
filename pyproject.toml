@@ -36,6 +36,7 @@ structlog = ">=24.1.0,<26"
 pyjwt = "^2.9.0"
 cryptography = "^43.0.3"
 langgraph-sdk = "^0.1.58"
+coredis = "^4.20.0"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.6.2"
