@@ -24,7 +24,6 @@ from starlette.exceptions import HTTPException
 from langgraph_api.asyncio import SimpleTaskGroup, ValueEvent, create_task
 from langgraph_api.auth.custom import handle_event
 from langgraph_api.command import map_cmd
-from langgraph_api.config import ThreadTTLConfig
 from langgraph_api.errors import UserInterrupt, UserRollback
 from langgraph_api.graph import get_graph
 from langgraph_api.schema import (
@@ -673,7 +672,7 @@ class Threads(Authenticated):
         *,
         metadata: MetadataInput,
         if_exists: OnConflictBehavior,
-        ttl: ThreadTTLConfig | None = None,
+        ttl:  None = None,
         ctx: Auth.types.BaseAuthContext | None = None,
     ) -> AsyncIterator[Thread]:
         """Insert or update a thread."""
