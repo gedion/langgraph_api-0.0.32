@@ -1,112 +1,100 @@
+import asyncio
+import os
 import threading
-from collections.abc import Callable
-from typing import Any, cast
+from collections import defaultdict
+from collections.abc import Iterable
+from typing import Any
 
-import orjson
-import structlog
-from langgraph.store.postgres.aio import AsyncPostgresStore, PostgresIndexConfig
-from langgraph_api.config import StoreConfig, TTLConfig
+from langgraph.checkpoint.memory import PersistentDict
+from langgraph.store.base import BaseStore, Op, Result
+from langgraph.store.base.batch import AsyncBatchedBaseStore
+from langgraph.store.memory import InMemoryStore
+
 from langgraph_api.graph import resolve_embeddings
-from langgraph_api.serde import json_loads
-from psycopg import AsyncConnection, AsyncCursor, AsyncPipeline
-from psycopg.rows import DictRow
-from psycopg_pool import AsyncConnectionPool
 
-logger = structlog.stdlib.get_logger(__name__)
-
-_STORE_CONFIG: StoreConfig = {}
+_STORE_CONFIG = None
+DISABLE_FILE_PERSISTENCE = (
+    os.getenv("LANGGRAPH_DISABLE_FILE_PERSISTENCE", "false").lower() == "true"
+)
 
 
-class PGSTore(AsyncPostgresStore):
-    """The async store."""
-
-    def __init__(
-        self,
-        conn: AsyncConnectionPool[AsyncConnection[DictRow]],
-        *,
-        pipe: AsyncPipeline | None = None,
-        deserializer: Callable[[bytes | orjson.Fragment], dict[str, Any]] | None = None,
-        index: PostgresIndexConfig | None = None,
-        ttl: TTLConfig | None = None,
-    ) -> None:
-        if index is None:
-            index = _STORE_CONFIG.get("index")
-        if ttl is None:
-            ttl = _STORE_CONFIG.get("ttl")
-        super().__init__(conn, deserializer=json_loads, index=index, ttl=ttl)
-
-    async def setup(self) -> None:
-        raise NotImplementedError("Do not use the OSS's setup method.")
-
-
-def set_store_config(config: StoreConfig) -> None:
-    global _STORE_CONFIG
-    _STORE_CONFIG = config.copy()
-    if "index" not in _STORE_CONFIG or not _STORE_CONFIG["index"]:
-        return
-    _STORE_CONFIG["index"]["embed"] = resolve_embeddings(_STORE_CONFIG["index"])
-
-
-async def setup_vector_index(store: PGSTore) -> None:
-    """Set up the store database asynchronously.
-
-    This method creates the necessary tables in the Postgres database if they don't
-    already exist and runs database migrations. It MUST be called directly by the user
-    the first time the store is used.
-    """
-
-    async def _get_version(cur: AsyncCursor[DictRow], table: str) -> int:
-        await cur.execute(
-            f"""
-                CREATE TABLE IF NOT EXISTS {table} (
-                    v INTEGER PRIMARY KEY
-                )
-            """
-        )
-        await cur.execute(f"SELECT v FROM {table} ORDER BY v DESC LIMIT 1")
-        row = cast(dict, await cur.fetchone())
-        if row is None:
-            version = -1
-        else:
-            version = row["v"]
-        return version
-
-    if store.index_config:
-        async with store._cursor() as cur:
-            version = await _get_version(cur, table="vector_migrations")
-            for v, migration in enumerate(
-                store.VECTOR_MIGRATIONS[version + 1 :], start=version + 1
-            ):
-                sql = migration.sql
-                if migration.params:
-                    params = {
-                        k: v(store) if v is not None and callable(v) else v
-                        for k, v in migration.params.items()
-                    }
-                    sql = sql % params
-                await cur.execute(sql)
-                await cur.execute("INSERT INTO vector_migrations (v) VALUES (%s)", (v,))
-                await logger.ainfo("Applied vector migration", v=v)
-            await logger.ainfo(
-                "Done applying vector migrations",
-                version=version,
+class DiskBackedInMemStore(InMemoryStore):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        if not DISABLE_FILE_PERSISTENCE:
+            self._data = PersistentDict(dict, filename=_STORE_FILE)
+            self._vectors = PersistentDict(
+                lambda: defaultdict(dict), filename=_VECTOR_FILE
             )
-    else:
-        await logger.awarning("No vector migrations to apply")
+        else:
+            self._data = InMemoryStore._data
+            self._vectors = InMemoryStore._vectors
+        self._load_data(self._data, which="data")
+        self._load_data(self._vectors, which="vectors")
+
+    def _load_data(self, container: PersistentDict, which: str) -> None:
+        if not container.filename:
+            return
+        try:
+            container.load()
+        except FileNotFoundError:
+            # It's okay if the file doesn't exist yet
+            pass
+
+        except (EOFError, ValueError) as e:
+            raise RuntimeError(
+                f"Failed to load store {which} from {container.filename}. "
+                "This may be due to changes in the stored data structure. "
+                "Consider clearing the local store by running: rm -rf .langgraph_api"
+            ) from e
+        except Exception as e:
+            raise RuntimeError(
+                f"Unexpected error loading store {which} from {container.filename}: {str(e)}"
+            ) from e
+
+    async def start_ttl_sweeper(self) -> asyncio.Task[None]:
+        return asyncio.create_task(asyncio.sleep(0))
+
+    def close(self) -> None:
+        self._data.close()
+        self._vectors.close()
 
 
-_STORE = threading.local()
+class BatchedStore(AsyncBatchedBaseStore):
+    def __init__(self, store: BaseStore) -> None:
+        super().__init__()
+        self._store = store
+
+    def batch(self, ops: Iterable[Op]) -> list[Result]:
+        return self._store.batch(ops)
+
+    async def abatch(self, ops: Iterable[Op]) -> list[Result]:
+        return await self._store.abatch(ops)
+
+    async def start_ttl_sweeper(self) -> asyncio.Task[None]:
+        return await self._store.start_ttl_sweeper()
+
+    def close(self) -> None:
+        self._store.close()
 
 
-def start_store(pool: AsyncConnectionPool[AsyncConnection[DictRow]]) -> PGSTore:
-    _STORE.store = PGSTore(
-        conn=pool, index=_STORE_CONFIG.get("index"), ttl=_STORE_CONFIG.get("ttl")
-    )
+_STORE_FILE = os.path.join(".langgraph_api", "store.pckl")
+_VECTOR_FILE = os.path.join(".langgraph_api", "store.vectors.pckl")
+os.makedirs(".langgraph_api", exist_ok=True)
+STORE = DiskBackedInMemStore()
+BATCHED_STORE = threading.local()
 
 
-def Store(*args: Any, **kwargs: Any) -> PGSTore:
-    if not hasattr(_STORE, "store"):
-        from langgraph_storage.database import get_pool
+def set_store_config(config: dict) -> None:
+    global _STORE_CONFIG, STORE
+    _STORE_CONFIG = config.copy()
+    _STORE_CONFIG["index"]["embed"] = resolve_embeddings(_STORE_CONFIG.get("index", {}))
+    # Re-create the store
+    STORE.close()
+    STORE = DiskBackedInMemStore(index=_STORE_CONFIG.get("index", {}))
 
-        start_store(get_pool())
-    return _STORE.store
+
+def Store(*args: Any, **kwargs: Any) -> DiskBackedInMemStore:
+    if not hasattr(BATCHED_STORE, "store"):
+        BATCHED_STORE.store = BatchedStore(STORE)
+    return BATCHED_STORE.store
